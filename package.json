@@ -1,0 +1,24 @@
+{
+  "name": "manga-epub",
+  "version": "1.0.0",
+  "description": "CLI pour télécharger des scans de manga depuis anime-sama.to et les convertir en EPUB",
+  "type": "module",
+  "bin": {
+    "manga-epub": "./bin/manga-epub.js"
+  },
+  "scripts": {
+    "start": "node bin/manga-epub.js"
+  },
+  "keywords": ["manga", "epub", "scraper", "anime-sama"],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "cheerio": "^1.0.0",
+    "cli-progress": "^3.12.0",
+    "commander": "^12.1.0",
+    "jszip": "^3.10.1"
+  }
+}
