@@ -141,7 +141,19 @@ export function buildImageUrl(realName, chapter, page) {
 }
 
 /**
+ * Vérifie qu'un buffer contient une image JPEG valide
+ * @param {Buffer} buf
+ * @returns {boolean}
+ */
+function isValidJpeg(buf) {
+  if (!buf || buf.length < 1024) return false;
+  // Magic bytes JPEG : FF D8 FF
+  return buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+}
+
+/**
  * Télécharge une image en mémoire avec retry
+ * Valide que le buffer est une image JPEG non vide.
  * @param {string} url - URL de l'image
  * @returns {Promise<Buffer>} Buffer de l'image
  */
@@ -151,11 +163,15 @@ export async function downloadImage(url) {
       headers: {
         "User-Agent": randomUA(),
         Referer: `${BASE_URL}/`,
-        Accept: "image/webp,image/apng,image/*,*/*;q=0.8",
+        Accept: "image/jpeg,image/png,image/*,*/*;q=0.8",
       },
       responseType: "arraybuffer",
       timeout: 30000,
     });
-    return Buffer.from(data);
+    const buf = Buffer.from(data);
+    if (!isValidJpeg(buf)) {
+      throw new Error(`Image invalide (${buf.length} octets, pas un JPEG)`);
+    }
+    return buf;
   }, 3, `image ${url.split("/").pop()}`);
 }

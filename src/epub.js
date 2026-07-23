@@ -3,8 +3,8 @@ import fs from "fs";
 import path from "path";
 
 /**
- * Génère un fichier EPUB pour un chapitre de manga
- * Utilise JSZip directement pour un contrôle total sur le contenu.
+ * Génère un fichier EPUB pour un chapitre de manga.
+ * Chaque page image est un fichier XHTML séparé (fixed-layout).
  *
  * @param {Object} options
  * @param {string} options.title - Titre du manga
@@ -25,7 +25,7 @@ export async function generateEpub({
 }) {
   const zip = new JSZip();
 
-  // ── mimetype (doit être le premier fichier, non compressé) ──
+  // ── mimetype (premier fichier, non compressé, requis par la spec EPUB) ──
   zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
 
   // ── META-INF/container.xml ──
@@ -41,53 +41,48 @@ export async function generateEpub({
 
   // ── CSS ──
   const css = `body { margin: 0; padding: 0; background: #fff; }
-div { text-align: center; page-break-after: always; }
 img { max-width: 100%; height: auto; display: block; margin: 0 auto; }`;
   zip.file("OEBPS/style.css", css);
 
-  // ── Images ──
+  // ── Un fichier XHTML par page image ──
   const manifestItems = [];
   const spineItems = [];
 
-  // Page HTML principale avec toutes les images
-  const imgTags = pages
-    .map(
-      (page, i) =>
-        `<div style="text-align:center; page-break-after:always;">
-  <img src="images/${page.filename}" style="max-width:100%; height:auto;" />
-</div>`
-    )
-    .join("\n");
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    const xhtmlName = `page_${String(i + 1).padStart(3, "0")}.xhtml`;
+    const pageNum = i + 1;
 
-  const xhtml = `<?xml version="1.0" encoding="UTF-8"?>
+    const xhtml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="${lang}">
 <head>
   <meta charset="UTF-8"/>
-  <title>Chapitre ${chapter}</title>
+  <title>Page ${pageNum}</title>
   <link rel="stylesheet" type="text/css" href="style.css"/>
 </head>
 <body>
-${imgTags}
+  <img src="images/${page.filename}" alt="Page ${pageNum}"/>
 </body>
 </html>`;
 
-  zip.file("OEBPS/0_Chapitre-1.xhtml", xhtml);
+    zip.file(`OEBPS/${xhtmlName}`, xhtml);
 
-  // Ajouter chaque image au zip et au manifest
-  for (const page of pages) {
-    zip.file(`OEBPS/images/${page.filename}`, page.buffer);
+    // Manifest : image + xhtml
     manifestItems.push(
-      `<item id="img_${page.filename.replace(/\./g, "_")}" href="images/${page.filename}" media-type="image/jpeg"/>`
+      `<item id="img_${i + 1}" href="images/${page.filename}" media-type="image/jpeg"/>`,
+      `<item id="p${pageNum}" href="${xhtmlName}" media-type="application/xhtml+xml"/>`
     );
+
+    // Spine : chaque page = une entrée séparée
+    spineItems.push(`<itemref idref="p${pageNum}"/>`);
   }
 
+  // Manifest : css + nav
   manifestItems.push(
     `<item id="style" href="style.css" media-type="text/css"/>`,
-    `<item id="chap1" href="0_Chapitre-1.xhtml" media-type="application/xhtml+xml"/>`
+    `<item id="nav" href="toc.xhtml" media-type="application/xhtml+xml" properties="nav"/>`
   );
-
-  spineItems.push(`<itemref idref="chap1"/>`);
 
   // ── content.opf ──
   const contentOpf = `<?xml version="1.0" encoding="UTF-8"?>
@@ -103,7 +98,6 @@ ${imgTags}
   </metadata>
   <manifest>
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
-    <item id="nav" href="toc.xhtml" media-type="application/xhtml+xml" properties="nav"/>
     ${manifestItems.join("\n    ")}
   </manifest>
   <spine toc="ncx">
@@ -122,7 +116,7 @@ ${imgTags}
   <navMap>
     <navPoint id="navPoint-1" playOrder="1">
       <navLabel><text>Chapitre ${chapter}</text></navLabel>
-      <content src="0_Chapitre-1.xhtml"/>
+      <content src="page_001.xhtml"/>
     </navPoint>
   </navMap>
 </ncx>`;
@@ -139,19 +133,24 @@ ${imgTags}
 <body>
   <nav epub:type="toc">
     <ol>
-      <li><a href="0_Chapitre-1.xhtml">Chapitre ${chapter}</a></li>
+      <li><a href="page_001.xhtml">Chapitre ${chapter}</a></li>
     </ol>
   </nav>
 </body>
 </html>`;
   zip.file("OEBPS/toc.xhtml", tocXhtml);
 
-  // ── Générer le buffer ──
+  // ── Ajouter les images (STORE, pas de compression) ──
+  for (const page of pages) {
+    zip.file(`OEBPS/images/${page.filename}`, page.buffer, { compression: "STORE" });
+  }
+
+  // ── Générer le buffer ZIP ──
   const buffer = await zip.generateAsync({
     type: "nodebuffer",
     mimeType: "application/epub+zip",
     compression: "DEFLATE",
-    compressionOptions: { level: 9 },
+    compressionOptions: { level: 6 },
   });
 
   // ── Écrire le fichier ──
