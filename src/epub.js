@@ -1,6 +1,7 @@
 import JSZip from "jszip";
 import fs from "fs";
 import path from "path";
+import sharp from "sharp";
 
 /**
  * Génère un fichier EPUB pour un chapitre de manga.
@@ -53,16 +54,25 @@ img { max-width: 100%; height: auto; display: block; margin: 0 auto; }`;
     const xhtmlName = `page_${String(i + 1).padStart(3, "0")}.xhtml`;
     const pageNum = i + 1;
 
+    // Dimensions réelles de l'image : indispensable en fixed-layout pour que
+    // la liseuse (Kobo, Kindle...) connaisse le vrai format de la page.
+    // Sans ça, un lecteur applique un canevas générique (souvent portrait) à
+    // toutes les pages, ce qui écrase les pages paysage (couvertures en
+    // double page, planches "spread") dedans avec de grosses marges au lieu
+    // de les afficher pleine page.
+    const { width, height } = await sharp(page.buffer).metadata();
+
     const xhtml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="${lang}">
 <head>
   <meta charset="UTF-8"/>
   <title>Page ${pageNum}</title>
+  <meta name="viewport" content="width=${width}, height=${height}"/>
   <link rel="stylesheet" type="text/css" href="style.css"/>
 </head>
 <body>
-  <img src="images/${page.filename}" alt="Page ${pageNum}"/>
+  <img src="images/${page.filename}" alt="Page ${pageNum}" width="${width}" height="${height}"/>
 </body>
 </html>`;
 
