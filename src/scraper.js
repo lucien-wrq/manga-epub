@@ -1,8 +1,21 @@
 import axios from "axios";
 import * as cheerio from "cheerio";
+import sharp from "sharp";
 import { randomUA, delay, retry } from "./utils.js";
 
 const BASE_URL = "https://anime-sama.to";
+
+// Hauteur cible (px) à laquelle toutes les pages sont normalisées.
+// Les scans d'anime-sama viennent de groupes différents selon les chapitres
+// et n'ont pas du tout la même résolution native (ex: 1560x2400 pour le
+// chapitre 26 de One Piece contre 779x1200 pour le chapitre 27, soit deux
+// fois moins de pixels dans chaque dimension). Les liseuses fixed-layout
+// (Kobo notamment) réduisent une page trop grande pour remplir l'écran mais
+// n'agrandissent pas une page trop petite : sans normalisation, les
+// chapitres en plus basse résolution s'affichent donc "dézoomés", avec des
+// marges, par rapport aux autres. On force donc toutes les pages à la même
+// hauteur de référence (proportions conservées) pour un rendu cohérent.
+const TARGET_PAGE_HEIGHT = 2400;
 
 /**
  * Headers de base pour les requêtes vers anime-sama
@@ -141,21 +154,19 @@ export function buildImageUrl(realName, chapter, page) {
 }
 
 /**
- * Vérifie qu'un buffer contient une image JPEG valide
- * @param {Buffer} buf
- * @returns {boolean}
- */
-function isValidJpeg(buf) {
-  if (!buf || buf.length < 1024) return false;
-  // Magic bytes JPEG : FF D8 FF
-  return buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
-}
-
-/**
- * Télécharge une image en mémoire avec retry
- * Valide que le buffer est une image JPEG non vide.
+ * Télécharge une image en mémoire avec retry.
+ *
+ * Le CDN d'anime-sama sert parfois des images WebP (voire PNG) sous une
+ * URL en ".jpg" avec un header "Content-Type: image/jpeg" mensonger
+ * (constaté à partir du chapitre 27 de "One Piece" noir et blanc, par ex.).
+ * On ne peut donc pas se fier à l'extension ni au Content-Type : on
+ * détecte le vrai format à partir des octets et on transcode en JPEG si
+ * besoin, pour garantir un fichier réellement conforme au media-type
+ * déclaré dans l'EPUB (sinon certaines liseuses affichent des pages
+ * déformées/corrompues).
+ *
  * @param {string} url - URL de l'image
- * @returns {Promise<Buffer>} Buffer de l'image
+ * @returns {Promise<Buffer>} Buffer d'une image JPEG valide
  */
 export async function downloadImage(url) {
   return retry(async () => {
@@ -169,9 +180,21 @@ export async function downloadImage(url) {
       timeout: 30000,
     });
     const buf = Buffer.from(data);
-    if (!isValidJpeg(buf)) {
-      throw new Error(`Image invalide (${buf.length} octets, pas un JPEG)`);
+    if (!buf || buf.length < 1024) {
+      throw new Error(`Image invalide (${buf?.length ?? 0} octets)`);
     }
-    return buf;
+
+    let meta;
+    try {
+      meta = await sharp(buf).metadata();
+    } catch (err) {
+      throw new Error(`Image illisible (${buf.length} octets): ${err.message}`);
+    }
+
+    if (meta.format === "jpeg" && meta.height === TARGET_PAGE_HEIGHT) return buf;
+    return sharp(buf)
+      .resize({ height: TARGET_PAGE_HEIGHT })
+      .jpeg({ quality: 92 })
+      .toBuffer();
   }, 3, `image ${url.split("/").pop()}`);
 }
