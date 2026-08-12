@@ -70,9 +70,19 @@ export async function searchManga(query) {
 }
 
 /**
+ * Détermine le type d'un scan (couleur ou noir et blanc) à partir de sa valeur.
+ * Le scan couleur est la valeur "scan", le noir et blanc "scan_noir-et-blanc".
+ * @param {string} scanValue - Valeur du scan (ex: "scan", "scan_noir-et-blanc")
+ * @returns {"couleur"|"noir-blanc"}
+ */
+export function getScanType(scanValue) {
+  return scanValue.includes("noir") ? "noir-blanc" : "couleur";
+}
+
+/**
  * Récupère les variantes de scan disponibles pour un manga
  * @param {string} animeId - ID du manga dans le catalogue
- * @returns {Promise<Array<{name: string, scanValue: string, language: string, path: string}>>}
+ * @returns {Promise<Array<{name: string, scanValue: string, language: string, type: string, path: string}>>}
  */
 export async function getScanVariants(animeId) {
   const url = `${BASE_URL}/catalogue/${animeId}/`;
@@ -92,8 +102,9 @@ export async function getScanVariants(animeId) {
     const parts = scanPath.split("/");
     const scanValue = parts[0]; // ex: "scan", "scan_noir-et-blanc"
     const language = parts[1]; // ex: "vf", "vostfr"
+    const type = getScanType(scanValue);
 
-    variants.push({ name, scanValue, language, path: scanPath });
+    variants.push({ name, scanValue, language, type, path: scanPath });
   }
 
   return variants;

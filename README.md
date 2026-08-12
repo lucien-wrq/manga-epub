@@ -27,18 +27,22 @@ Affiche les résultats avec l'ID, le titre et l'URL de chaque manga trouvé.
 ### Lister les chapitres disponibles
 
 ```bash
-node bin/manga-epub.js chapters "one piece" --scan vf
+node bin/manga-epub.js chapters "one piece" --scan vf --type couleur
 ```
 
-| Option        | Description                        | Défaut |
-| ------------- | ---------------------------------- | ------ |
-| `--scan`      | Langue du scan (`vf` ou `vostfr`)  | `vf`   |
+| Option        | Description                                   | Défaut    |
+| ------------- | --------------------------------------------- | --------- |
+| `--scan`      | Langue du scan (`vf` ou `vostfr`)             | `vf`      |
+| `--type`      | Type de scan (`couleur` ou `noir-blanc`)      | `couleur` |
 
 ### Télécharger un chapitre
 
 ```bash
 # Chapitre unique
 node bin/manga-epub.js download "one piece" --chapter 1 --scan vf
+
+# Scan noir et blanc (sort souvent avant le scan couleur)
+node bin/manga-epub.js download "one piece" --chapter 1 --scan vf --type noir-blanc
 
 # Plage de chapitres (un EPUB par chapitre)
 node bin/manga-epub.js download "one piece" --chapters 1-10 --scan vf
@@ -52,6 +56,7 @@ node bin/manga-epub.js download "one piece" --chapter 1 --scan vf --out ./mes-ma
 | `--chapter`   | Numéro du chapitre unique                | —                  |
 | `--chapters`  | Plage de chapitres (ex: `1-10`)          | —                  |
 | `--scan`      | Langue du scan (`vf` ou `vostfr`)        | `vf`               |
+| `--type`      | Type de scan (`couleur` ou `noir-blanc`) | `couleur`          |
 | `--out`       | Dossier de sortie                        | `./output`         |
 
 > `--chapter` et `--chapters` sont mutuellement exclusifs.

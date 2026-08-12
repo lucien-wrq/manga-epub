@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import {
   searchManga,
   getScanVariants,
@@ -65,6 +65,11 @@ program
   .command("chapters <query>")
   .description("Lister les chapitres disponibles pour un scan")
   .option("--scan <vf|vostfr>", "Langue du scan", "vf")
+  .addOption(
+    new Option("--type <couleur|noir-blanc>", "Type de scan (couleur ou noir et blanc)")
+      .default("couleur")
+      .choices(["couleur", "noir-blanc"])
+  )
   .action(async (query, opts) => {
     try {
       console.log(`🔍 Recherche de "${query}"...`);
@@ -88,24 +93,26 @@ program
         return;
       }
 
-      // Filtrer par langue demandée
+      // Filtrer par langue et type demandés
       const matchingVariants = variants.filter(
-        (v) => v.language === opts.scan
+        (v) => v.language === opts.scan && v.type === opts.type
       );
 
       if (matchingVariants.length === 0) {
         console.log(
-          `❌ Aucun scan en "${opts.scan}" disponible pour ce manga.`
+          `❌ Aucun scan de type "${opts.type}" en "${opts.scan}" disponible pour ce manga.`
         );
         console.log("   Scans disponibles :");
         variants.forEach((v) => {
-          console.log(`   - ${v.name} (${v.language}) → ${v.path}`);
+          console.log(`   - ${v.name} (${v.language} - ${v.type}) → ${v.path}`);
         });
         return;
       }
 
       const variant = matchingVariants[0];
-      console.log(`📂 Scan sélectionné : ${variant.name} (${variant.path})\n`);
+      console.log(
+        `📂 Scan sélectionné : ${variant.name} (${variant.type}, ${variant.path})\n`
+      );
 
       // Récupérer le realName
       console.log("🔍 Récupération du nom exact...");
@@ -151,6 +158,11 @@ program
   .option("--chapter <number>", "Numéro du chapitre unique")
   .option("--chapters <range>", "Plage de chapitres (ex: 1-10)")
   .option("--scan <vf|vostfr>", "Langue du scan", "vf")
+  .addOption(
+    new Option("--type <couleur|noir-blanc>", "Type de scan (couleur ou noir et blanc)")
+      .default("couleur")
+      .choices(["couleur", "noir-blanc"])
+  )
   .option("--out <directory>", "Dossier de sortie", DEFAULT_OUTPUT)
   .action(async (query, opts) => {
     try {
@@ -186,22 +198,24 @@ program
       const variants = await getScanVariants(manga.id);
 
       const matchingVariants = variants.filter(
-        (v) => v.language === opts.scan
+        (v) => v.language === opts.scan && v.type === opts.type
       );
 
       if (matchingVariants.length === 0) {
         console.log(
-          `❌ Aucun scan en "${opts.scan}" disponible pour ce manga.`
+          `❌ Aucun scan de type "${opts.type}" en "${opts.scan}" disponible pour ce manga.`
         );
         console.log("   Scans disponibles :");
         variants.forEach((v) => {
-          console.log(`   - ${v.name} (${v.language}) → ${v.path}`);
+          console.log(`   - ${v.name} (${v.language} - ${v.type}) → ${v.path}`);
         });
         return;
       }
 
       const variant = matchingVariants[0];
-      console.log(`📂 Scan sélectionné : ${variant.name} (${variant.path})\n`);
+      console.log(
+        `📂 Scan sélectionné : ${variant.name} (${variant.type}, ${variant.path})\n`
+      );
 
       // Récupérer le realName
       console.log("🔍 Récupération du nom exact...");
