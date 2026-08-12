@@ -8,8 +8,9 @@ import {
   getChapterInfo,
   buildImageUrl,
   downloadImage,
+  getAuthor,
 } from "../src/scraper.js";
-import { generateEpub } from "../src/epub.js";
+import { generateEpub, generateMergedEpub } from "../src/epub.js";
 import {
   ensureDir,
   sanitizeFilename,
@@ -24,6 +25,49 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUTPUT = path.join(__dirname, "..", "output");
+
+/**
+ * Télécharge toutes les pages d'un chapitre en mémoire.
+ * Les images échouées après retry sont ignorées sans interrompre.
+ * @param {string} realName - Nom exact du manga
+ * @param {number} chapterNum - Numéro du chapitre
+ * @param {number} pageCount - Nombre de pages
+ * @returns {Promise<Array<{url: string, buffer: Buffer, filename: string}>>}
+ */
+async function downloadChapterPages(realName, chapterNum, pageCount) {
+  const pages = [];
+  const bar = createProgressBar(pageCount, `  Chap. ${chapterNum}`);
+
+  let failedImages = 0;
+
+  for (let page = 1; page <= pageCount; page++) {
+    const url = buildImageUrl(realName, chapterNum, page);
+
+    try {
+      const buffer = await downloadImage(url);
+      pages.push({ url, buffer, filename: `page_${page}.jpg` });
+    } catch (err) {
+      // Image échouée après 3 retries : warning mais continuer
+      console.warn(
+        `\n  ⚠ Image page ${page} échouée, ignorée : ${err.message}`
+      );
+      failedImages++;
+    }
+
+    updateProgress(bar, page);
+
+    // Délai entre chaque image
+    if (page < pageCount) await delay();
+  }
+
+  stopProgress(bar);
+
+  if (failedImages > 0) {
+    console.log(`  ⚠ ${failedImages} image(s) échouée(s) sur ${pageCount}`);
+  }
+
+  return pages;
+}
 
 const program = new Command();
 
@@ -157,6 +201,7 @@ program
   .description("Télécharger un ou plusieurs chapitres en EPUB")
   .option("--chapter <number>", "Numéro du chapitre unique")
   .option("--chapters <range>", "Plage de chapitres (ex: 1-10)")
+  .option("--merge", "Regrouper tous les chapitres téléchargés en un seul EPUB")
   .option("--scan <vf|vostfr>", "Langue du scan", "vf")
   .addOption(
     new Option("--type <couleur|noir-blanc>", "Type de scan (couleur ou noir et blanc)")
@@ -263,72 +308,99 @@ program
         `\n📥 Téléchargement de ${validChapters.length} chapitre(s)...\n`
       );
 
-      // Télécharger chaque chapitre
-      for (const chapterNum of validChapters) {
-        const pageCount = chapterInfo[String(chapterNum)];
-        console.log(
-          `\n── Chapitre ${chapterNum} (${pageCount} pages) ──`
+      // Récupérer l'auteur réel du manga
+      let author = "Inconnu";
+      try {
+        console.log("🔍 Récupération des informations du manga...");
+        const mangaAuthor = await getAuthor(manga.id);
+        if (mangaAuthor) author = mangaAuthor;
+        console.log(`   Auteur : ${author}`);
+      } catch (err) {
+        console.warn(
+          `  ⚠ Informations du manga indisponibles (auteur) : ${err.message}`
         );
+      }
 
-        const pages = [];
-        const bar = createProgressBar(pageCount, `  Chap. ${chapterNum}`);
+      if (opts.merge && validChapters.length > 1) {
+        // ── Mode fusion : un seul EPUB avec tous les chapitres ──
+        const chapters = [];
 
-        let failedImages = 0;
+        for (const chapterNum of validChapters) {
+          const pageCount = chapterInfo[String(chapterNum)];
+          console.log(`\n── Chapitre ${chapterNum} (${pageCount} pages) ──`);
 
-        for (let page = 1; page <= pageCount; page++) {
-          const url = buildImageUrl(realName, chapterNum, page);
+          const pages = await downloadChapterPages(
+            realName,
+            chapterNum,
+            pageCount
+          );
 
-          try {
-            const buffer = await downloadImage(url);
-            pages.push({ url, buffer, filename: `page_${page}.jpg` });
-          } catch (err) {
-            // Image échouée après 3 retries : warning mais continuer
-            console.warn(
-              `\n  ⚠ Image page ${page} échouée, ignorée : ${err.message}`
+          if (pages.length === 0) {
+            console.log(
+              `  ❌ Chapitre ${chapterNum} abandonné (aucune image récupérée).`
             );
-            failedImages++;
+            continue;
           }
 
-          updateProgress(bar, page);
-
-          // Délai entre chaque image
-          if (page < pageCount) await delay();
+          chapters.push({ num: chapterNum, pages });
         }
 
-        stopProgress(bar);
-
-        if (failedImages > 0) {
-          console.log(
-            `  ⚠ ${failedImages} image(s) échouée(s) sur ${pageCount}`
-          );
+        if (chapters.length === 0) {
+          console.log("❌ Aucun chapitre téléchargé.");
+          return;
         }
 
-        if (pages.length === 0) {
-          console.log(
-            `  ❌ Chapitre ${chapterNum} abandonné (aucune image récupérée).`
-          );
-          continue;
-        }
-
-        // Générer l'EPUB
-        console.log(`  📦 Génération de l'EPUB...`);
-
-        const coverUrl = buildImageUrl(realName, chapterNum, 1);
-
-        const epubPath = await generateEpub({
+        console.log(`  📦 Génération de l'EPUB fusionné...`);
+        const epubPath = await generateMergedEpub({
           title: manga.title,
-          chapter: chapterNum,
-          author: "Eiichiro Oda",
+          chapters,
+          author,
           lang: "fr",
-          coverUrl,
-          pages,
           outDir: opts.out,
         });
 
         console.log(`  ✅ EPUB créé : ${epubPath}`);
-      }
+        console.log(
+          `\n🎉 Terminé ! 1 EPUB (${chapters.length} chapitres) créé.`
+        );
+      } else {
+        // ── Mode standard : un EPUB par chapitre ──
+        let created = 0;
 
-      console.log(`\n🎉 Terminé ! ${validChapters.length} EPUB(s) créé(s).`);
+        for (const chapterNum of validChapters) {
+          const pageCount = chapterInfo[String(chapterNum)];
+          console.log(`\n── Chapitre ${chapterNum} (${pageCount} pages) ──`);
+
+          const pages = await downloadChapterPages(
+            realName,
+            chapterNum,
+            pageCount
+          );
+
+          if (pages.length === 0) {
+            console.log(
+              `  ❌ Chapitre ${chapterNum} abandonné (aucune image récupérée).`
+            );
+            continue;
+          }
+
+          // Générer l'EPUB
+          console.log(`  📦 Génération de l'EPUB...`);
+          const epubPath = await generateEpub({
+            title: manga.title,
+            chapter: chapterNum,
+            author,
+            lang: "fr",
+            pages,
+            outDir: opts.out,
+          });
+
+          console.log(`  ✅ EPUB créé : ${epubPath}`);
+          created++;
+        }
+
+        console.log(`\n🎉 Terminé ! ${created} EPUB(s) créé(s).`);
+      }
     } catch (err) {
       console.error("❌ Erreur :", err.message);
     }

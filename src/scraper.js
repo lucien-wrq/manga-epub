@@ -111,6 +111,32 @@ export async function getScanVariants(animeId) {
 }
 
 /**
+ * Récupère l'auteur/créateur d'un manga depuis sa page catalogue.
+ * La page affiche des couples `<span class="info-lbl">` / `<span class="info-val">`
+ * (ex: "Créateur" -> "Eiichiro Oda").
+ * @param {string} animeId - ID du manga dans le catalogue
+ * @returns {Promise<string|null>}
+ */
+export async function getAuthor(animeId) {
+  const url = `${BASE_URL}/catalogue/${animeId}/`;
+  const { data } = await axios.get(url, { headers: baseHeaders() });
+  const $ = cheerio.load(data);
+
+  const authorLabel = $("span.info-lbl")
+    .filter((_, el) => {
+      const text = $(el).text().trim();
+      return text === "Créateur" || text === "Auteur";
+    })
+    .first();
+
+  const author = authorLabel.length
+    ? authorLabel.next().text().trim()
+    : "";
+
+  return author || null;
+}
+
+/**
  * Récupère le realName (nom exact utilisé par le CDN) pour un scan donné
  * @param {string} animeId - ID du manga
  * @param {string} scanValue - Valeur du scan (ex: "scan")

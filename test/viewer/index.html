@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Viewer EPUB manga</title>
+  <style>
+    :root {
+      --bg: #1e1e2e;
+      --panel: #27273a;
+      --accent: #7aa2f7;
+      --text: #cdd6f4;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      background: var(--panel);
+      border-bottom: 1px solid #33334d;
+      flex-wrap: wrap;
+    }
+    header h1 { font-size: 16px; margin: 0; white-space: nowrap; }
+    header .spacer { flex: 1; }
+    #meta { font-size: 13px; opacity: 0.85; }
+    #meta b { color: var(--accent); }
+
+    button, select {
+      background: #3b3b5c;
+      color: var(--text);
+      border: 1px solid #4a4a70;
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    button:hover { background: #4a4a70; }
+    button:disabled { opacity: 0.4; cursor: default; }
+
+    #file-input { font-size: 13px; max-width: 320px; }
+    #viewer {
+      flex: 1;
+      position: relative;
+      margin: 10px;
+      overflow: hidden;
+      background: #14141f;
+      border: 1px solid #33334d;
+      border-radius: 8px;
+    }
+    #viewer .epub-container {
+      position: absolute;
+      inset: 0;
+    }
+
+    #placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: 10px;
+      padding: 20px;
+    }
+    #placeholder .big { font-size: 18px; }
+    #placeholder small { opacity: 0.6; max-width: 480px; line-height: 1.5; }
+
+    footer {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      background: var(--panel);
+      border-top: 1px solid #33334d;
+      font-size: 13px;
+      flex-wrap: wrap;
+    }
+    #location { opacity: 0.7; }
+    #progress { flex: 1; height: 6px; background: #3b3b5c; border-radius: 3px; overflow: hidden; min-width: 120px; }
+    #progress div { height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
+
+    #instructions {
+      position: fixed;
+      right: 16px;
+      bottom: 64px;
+      width: 280px;
+      background: var(--panel);
+      border: 1px solid #4a4a70;
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 12px;
+      line-height: 1.6;
+      display: none;
+      z-index: 10;
+    }
+    #instructions.visible { display: block; }
+    #instructions h2 { margin: 0 0 8px; font-size: 13px; color: var(--accent); }
+    #instructions ul { margin: 0; padding-left: 16px; }
+    #instructions .close { float: right; background: none; border: none; padding: 0; font-size: 16px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>📖 Viewer EPUB manga</h1>
+    <input type="file" id="file-input" accept=".epub"/>
+    <div class="spacer"></div>
+    <span id="meta"></span>
+    <button id="btn-help">? Aide</button>
+  </header>
+
+  <div id="viewer">
+    <div id="placeholder">
+      <div class="big">Choisissez un fichier .epub pour l'afficher</div>
+      <small>Généré par manga-epub. Les EPUB fixed-layout s'affichent page par page (sens manga de droite à gauche via les flèches).</small>
+    </div>
+    <div id="book" class="epub-container" style="display:none"></div>
+  </div>
+
+  <footer>
+    <button id="btn-prev" disabled>←</button>
+    <button id="btn-next" disabled>→</button>
+    <label>Aller à : <select id="toc"></select></label>
+    <label>Vue : <select id="spread">
+      <option value="auto">Page (auto)</option>
+      <option value="none">Simple page</option>
+    </select></label>
+    <span id="location"></span>
+    <div id="progress"><div id="progress-bar"></div></div>
+  </footer>
+
+  <div id="instructions">
+    <button class="close" id="btn-close-help">✕</button>
+    <h2>Que tester ?</h2>
+    <ul>
+      <li><b>Rendu page par page</b> : les pages doivent remplir l'écran, sans marges ni zoom.</li>
+      <li><b>Double pages / pages paysage</b> : passe la vue en "auto" — les planches paysage doivent tenir pleine largeur.</li>
+      <li><b>Couverture</b> : la 1ère page affichée doit être la première page du chapitre (aucune page de couverture séparée).</li>
+      <li><b>Navigation</b> : la liste "Aller à" liste les chapitres (EPUB fusionné).</li>
+      <li><b>Métadonnées</b> : en haut à droite, titre + auteur réel (ex: "Eiichiro Oda").</li>
+      <li><b>Clavier</b> : ← / → pour tourner les pages.</li>
+    </ul>
+  </div>
+
+  <script src="vendor/jszip.min.js"></script>
+  <script src="vendor/epub.min.js"></script>
+  <script>
+    const fileInput = document.getElementById("file-input");
+    const meta = document.getElementById("meta");
+    const bookEl = document.getElementById("book");
+    const placeholder = document.getElementById("placeholder");
+    const btnPrev = document.getElementById("btn-prev");
+    const btnNext = document.getElementById("btn-next");
+    const tocEl = document.getElementById("toc");
+    const spreadEl = document.getElementById("spread");
+    const locationEl = document.getElementById("location");
+    const progressBar = document.getElementById("progress-bar");
+    const helpEl = document.getElementById("instructions");
+
+    let book = null;
+    let rendition = null;
+
+    document.getElementById("btn-help").onclick = () => helpEl.classList.toggle("visible");
+    document.getElementById("btn-close-help").onclick = () => helpEl.classList.remove("visible");
+
+    async function loadEpub(buffer, filename) {
+      if (rendition) { try { rendition.destroy(); } catch (e) {} }
+      if (book) { book.destroy(); }
+
+      book = ePub(buffer);
+      await book.ready;
+
+      // Métadonnées : exposées dans book.package.metadata (parfois book.metadata)
+      const m = (book.package && book.package.metadata) || book.metadata || {};
+      meta.innerHTML = `${m.title ? "<b>" + m.title + "</b>" : ""}${m.creator ? " — " + m.creator : ""}${m.language ? " (" + m.language + ")" : ""}`;
+
+      // Table des matières
+      tocEl.innerHTML = '<option value="">— TOC —</option>';
+      const nav = await book.navigation.get();
+      const items = Array.isArray(nav) ? nav : (nav.toc || []);
+      items.forEach((item, i) => {
+        const opt = document.createElement("option");
+        opt.value = item.href;
+        opt.textContent = item.label.trim();
+        tocEl.appendChild(opt);
+      });
+
+      placeholder.style.display = "none";
+      bookEl.style.display = "block";
+
+      rendition = book.renderTo(bookEl, {
+        width: "100%",
+        height: "100%",
+        spread: spreadEl.value,
+        allowScriptedContent: true,
+      });
+
+      rendition.on("relocated", (location) => {
+        const start = location.start;
+        locationEl.textContent = start ? decodeURIComponent(start.href.split("/").pop()) : "";
+        const pct = start ? Math.round((start.percentage || 0) * 100) : 0;
+        progressBar.style.width = pct + "%";
+        btnPrev.disabled = false;
+        btnNext.disabled = false;
+      });
+
+      btnPrev.onclick = () => rendition.prev();
+      btnNext.onclick = () => rendition.next();
+      tocEl.onchange = (e) => {
+        if (e.target.value) rendition.display(e.target.value);
+      };
+
+      await rendition.display();
+    }
+
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      const buffer = await file.arrayBuffer();
+      await loadEpub(buffer, file.name);
+    });
+
+    // Glisser-déposer
+    document.body.addEventListener("dragover", (e) => { e.preventDefault(); });
+    document.body.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      const file = e.dataTransfer.files[0];
+      if (!file || !file.name.toLowerCase().endsWith(".epub")) return;
+      const buffer = await file.arrayBuffer();
+      await loadEpub(buffer, file.name);
+    });
+
+    // Changer la vue (double page / simple page)
+    spreadEl.addEventListener("change", () => {
+      if (!rendition) return;
+      rendition.spread(spreadEl.value === "auto" ? "auto" : "none");
+    });
+
+    // Clavier
+    window.addEventListener("keydown", (e) => {
+      if (!rendition) return;
+      if (e.key === "ArrowRight") { e.preventDefault(); rendition.next(); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); rendition.prev(); }
+    });
+  </script>
+</body>
+</html>

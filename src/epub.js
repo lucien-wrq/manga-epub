@@ -24,6 +24,77 @@ export async function generateEpub({
   pages,
   outDir,
 }) {
+  const fileName = `${title.replace(/\s+/g, "_")}_chapitre_${chapter}`;
+  return buildEpub({
+    title,
+    author,
+    lang,
+    sections: [{ num: chapter, pages }],
+    outDir,
+    fileName,
+    rangeLabel: `Chapitre ${chapter}`,
+  });
+}
+
+/**
+ * Génère un fichier EPUB regroupant plusieurs chapitres de manga.
+ * Chaque chapitre commence par une page de titre et est référencé dans la
+ * table des matières.
+ *
+ * @param {Object} options
+ * @param {string} options.title - Titre du manga
+ * @param {Array<{num: number, pages: Array}>} options.chapters - Chapitres à regrouper
+ * @param {string} options.author - Auteur (optionnel)
+ * @param {string} options.lang - Langue (défaut: "fr")
+ * @param {string} options.outDir - Dossier de sortie
+ * @returns {Promise<string>} Chemin du fichier EPUB créé
+ */
+export async function generateMergedEpub({
+  title,
+  chapters,
+  author = "Inconnu",
+  lang = "fr",
+  outDir,
+}) {
+  const nums = chapters.map((c) => c.num);
+  const first = Math.min(...nums);
+  const last = Math.max(...nums);
+  const fileName = `${title.replace(/\s+/g, "_")}_chapitres_${first}_${last}`;
+  const rangeLabel =
+    first === last ? `Chapitre ${first}` : `Chapitres ${first} à ${last}`;
+
+  return buildEpub({
+    title,
+    author,
+    lang,
+    sections: chapters,
+    outDir,
+    fileName,
+    rangeLabel,
+  });
+}
+
+/**
+ * Cœur commun de construction d'un EPUB fixed-layout à partir de sections.
+ * @param {Object} params
+ * @param {string} params.title
+ * @param {string} params.author
+ * @param {string} params.lang
+ * @param {Array<{num: number, pages: Array}>} params.sections
+ * @param {string} params.outDir
+ * @param {string} params.fileName
+ * @param {string} params.rangeLabel
+ * @returns {Promise<string>}
+ */
+async function buildEpub({
+  title,
+  author,
+  lang,
+  sections,
+  outDir,
+  fileName,
+  rangeLabel,
+}) {
   const zip = new JSZip();
 
   // ── mimetype (premier fichier, non compressé, requis par la spec EPUB) ──
@@ -42,50 +113,90 @@ export async function generateEpub({
 
   // ── CSS ──
   const css = `body { margin: 0; padding: 0; background: #fff; }
-img { max-width: 100%; height: auto; display: block; margin: 0 auto; }`;
+img { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+body.chapter-title { display: table; width: 100%; height: 100%; }
+body.chapter-title h1 { display: table-cell; vertical-align: middle; text-align: center; font-family: sans-serif; font-size: 1.8em; }`;
   zip.file("OEBPS/style.css", css);
 
-  // ── Un fichier XHTML par page image ──
   const manifestItems = [];
   const spineItems = [];
+  const navPoints = [];
 
-  for (let i = 0; i < pages.length; i++) {
-    const page = pages[i];
-    const xhtmlName = `page_${String(i + 1).padStart(3, "0")}.xhtml`;
-    const pageNum = i + 1;
+  const uidBase = title.replace(/\s+/g, "-").toLowerCase();
+  const uid = `manga-epub-${uidBase}-${fileName.replace(/[^a-z0-9]/gi, "-").toLowerCase()}`;
 
-    // Dimensions réelles de l'image : indispensable en fixed-layout pour que
-    // la liseuse (Kobo, Kindle...) connaisse le vrai format de la page.
-    // Sans ça, un lecteur applique un canevas générique (souvent portrait) à
-    // toutes les pages, ce qui écrase les pages paysage (couvertures en
-    // double page, planches "spread") dedans avec de grosses marges au lieu
-    // de les afficher pleine page.
-    const { width, height } = await sharp(page.buffer).metadata();
+  const multi = sections.length > 1;
+  let firstImageDone = false;
 
-    const xhtml = `<?xml version="1.0" encoding="UTF-8"?>
+  for (const section of sections) {
+    const chapLabel = `Chapitre ${section.num}`;
+    const chapFile = multi ? `chap_${pad(section.num, 3)}.xhtml` : null;
+
+    // Page de titre du chapitre (uniquement dans les EPUB fusionnés)
+    if (multi) {
+      const chapHtml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="${lang}">
 <head>
   <meta charset="UTF-8"/>
-  <title>Page ${pageNum}</title>
-  <meta name="viewport" content="width=${width}, height=${height}"/>
+  <title>${escapeXml(chapLabel)}</title>
   <link rel="stylesheet" type="text/css" href="style.css"/>
 </head>
-<body>
-  <img src="images/${page.filename}" alt="Page ${pageNum}" width="${width}" height="${height}"/>
+<body class="chapter-title">
+  <h1>${escapeXml(chapLabel)}</h1>
 </body>
 </html>`;
+      zip.file(`OEBPS/${chapFile}`, chapHtml);
 
-    zip.file(`OEBPS/${xhtmlName}`, xhtml);
+      const chapId = `chap_${section.num}`;
+      manifestItems.push(
+        `<item id="${chapId}" href="${chapFile}" media-type="application/xhtml+xml"/>`
+      );
+      spineItems.push(`<itemref idref="${chapId}"/>`);
+      navPoints.push(`<navPoint id="navPoint-${section.num}" playOrder="${spineItems.length}">
+      <navLabel><text>${escapeXml(chapLabel)}</text></navLabel>
+      <content src="${chapFile}"/>
+    </navPoint>`);
+    }
 
-    // Manifest : image + xhtml
-    manifestItems.push(
-      `<item id="img_${i + 1}" href="images/${page.filename}" media-type="image/jpeg"/>`,
-      `<item id="p${pageNum}" href="${xhtmlName}" media-type="application/xhtml+xml"/>`
-    );
+    // ── Un fichier XHTML par page image ──
+    for (let i = 0; i < section.pages.length; i++) {
+      const page = section.pages[i];
+      const pageNum = i + 1;
 
-    // Spine : chaque page = une entrée séparée
-    spineItems.push(`<itemref idref="p${pageNum}"/>`);
+      const imgName = multi
+        ? `images/c${pad(section.num, 3)}_p${pad(pageNum, 3)}.jpg`
+        : `images/${page.filename}`;
+      const xhtmlName = multi
+        ? `c${pad(section.num, 3)}_p${pad(pageNum, 3)}.xhtml`
+        : `page_${pad(pageNum, 3)}.xhtml`;
+
+      // Dimensions réelles de l'image : indispensable en fixed-layout pour que
+      // la liseuse (Kobo, Kindle...) connaisse le vrai format de la page.
+      const { width, height } = await sharp(page.buffer).metadata();
+
+      zip.file(`OEBPS/${xhtmlName}`, pageXhtml(pageNum, imgName, width, height, lang));
+      zip.file(`OEBPS/${imgName}`, page.buffer, { compression: "STORE" });
+
+      const imgId = multi ? `img_c${section.num}_p${pageNum}` : `img_${pageNum}`;
+      const pageId = multi ? `p_c${section.num}_p${pageNum}` : `p${pageNum}`;
+      // La première page du chapitre fait office de couverture
+      const coverProp = !firstImageDone ? ` properties="cover-image"` : "";
+      firstImageDone = true;
+      manifestItems.push(
+        `<item id="${imgId}" href="${imgName}" media-type="image/jpeg"${coverProp}/>`,
+        `<item id="${pageId}" href="${xhtmlName}" media-type="application/xhtml+xml"/>`
+      );
+      spineItems.push(`<itemref idref="${pageId}"/>`);
+
+      // Nav point vers la première page pour un EPUB chapitre unique
+      if (!multi && i === 0) {
+        navPoints.push(`<navPoint id="navPoint-1" playOrder="1">
+      <navLabel><text>${escapeXml(rangeLabel)}</text></navLabel>
+      <content src="${xhtmlName}"/>
+    </navPoint>`);
+      }
+    }
   }
 
   // Manifest : css + nav
@@ -98,10 +209,10 @@ img { max-width: 100%; height: auto; display: block; margin: 0 auto; }`;
   const contentOpf = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookId" version="3.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:title>${escapeXml(`${title} - Chapitre ${chapter}`)}</dc:title>
+    <dc:title>${escapeXml(`${title} - ${rangeLabel}`)}</dc:title>
     <dc:creator>${escapeXml(author)}</dc:creator>
     <dc:language>${lang}</dc:language>
-    <dc:identifier id="BookId">manga-epub-${title.replace(/\s+/g, "-").toLowerCase()}-ch${chapter}</dc:identifier>
+    <dc:identifier id="BookId">${uid}</dc:identifier>
     <meta property="rendition:layout">pre-paginated</meta>
     <meta property="rendition:orientation">auto</meta>
     <meta property="rendition:spread">auto</meta>
@@ -120,19 +231,22 @@ img { max-width: 100%; height: auto; display: block; margin: 0 auto; }`;
   const tocNcx = `<?xml version="1.0" encoding="UTF-8"?>
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
   <head>
-    <meta name="dtb:uid" content="manga-epub-${title.replace(/\s+/g, "-").toLowerCase()}-ch${chapter}"/>
+    <meta name="dtb:uid" content="${uid}"/>
   </head>
-  <docTitle><text>${escapeXml(`${title} - Chapitre ${chapter}`)}</text></docTitle>
+  <docTitle><text>${escapeXml(`${title} - ${rangeLabel}`)}</text></docTitle>
   <navMap>
-    <navPoint id="navPoint-1" playOrder="1">
-      <navLabel><text>Chapitre ${chapter}</text></navLabel>
-      <content src="page_001.xhtml"/>
-    </navPoint>
+    ${navPoints.join("\n    ")}
   </navMap>
 </ncx>`;
   zip.file("OEBPS/toc.ncx", tocNcx);
 
   // ── toc.xhtml (EPUB3 nav) ──
+  const navEntries = sections
+    .map((s) => {
+      const target = multi ? `chap_${pad(s.num, 3)}.xhtml` : `page_001.xhtml`;
+      return `      <li><a href="${target}">Chapitre ${s.num}</a></li>`;
+    })
+    .join("\n");
   const tocXhtml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${lang}">
@@ -143,17 +257,12 @@ img { max-width: 100%; height: auto; display: block; margin: 0 auto; }`;
 <body>
   <nav epub:type="toc">
     <ol>
-      <li><a href="page_001.xhtml">Chapitre ${chapter}</a></li>
+${navEntries}
     </ol>
   </nav>
 </body>
 </html>`;
   zip.file("OEBPS/toc.xhtml", tocXhtml);
-
-  // ── Ajouter les images (STORE, pas de compression) ──
-  for (const page of pages) {
-    zip.file(`OEBPS/images/${page.filename}`, page.buffer, { compression: "STORE" });
-  }
 
   // ── Générer le buffer ZIP ──
   const buffer = await zip.generateAsync({
@@ -164,18 +273,43 @@ img { max-width: 100%; height: auto; display: block; margin: 0 auto; }`;
   });
 
   // ── Écrire le fichier ──
-  const epubTitle = `${title.replace(/\s+/g, "_")}_chapitre_${chapter}`;
-  const filePath = path.join(outDir, `${epubTitle}.epub`);
+  const filePath = path.join(outDir, `${fileName}.epub`);
   fs.writeFileSync(filePath, buffer);
 
   return filePath;
 }
 
 /**
+ * Génère un fichier XHTML pour une page image (fixed-layout).
+ */
+function pageXhtml(pageNum, imgHref, width, height, lang, alt = `Page ${pageNum}`) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="${lang}">
+<head>
+  <meta charset="UTF-8"/>
+  <title>${escapeXml(alt)}</title>
+  <meta name="viewport" content="width=${width}, height=${height}"/>
+  <link rel="stylesheet" type="text/css" href="style.css"/>
+</head>
+<body>
+  <img src="${imgHref}" alt="${escapeXml(alt)}" width="${width}" height="${height}"/>
+</body>
+</html>`;
+}
+
+/**
+ * Ajoute des zéros en tête à un nombre pour une largeur fixe.
+ */
+function pad(n, width) {
+  return String(n).padStart(width, "0");
+}
+
+/**
  * Échappe les caractères XML spéciaux
  */
 function escapeXml(str) {
-  return str
+  return String(str)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")

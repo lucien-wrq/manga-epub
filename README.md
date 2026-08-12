@@ -47,17 +47,21 @@ node bin/manga-epub.js download "one piece" --chapter 1 --scan vf --type noir-bl
 # Plage de chapitres (un EPUB par chapitre)
 node bin/manga-epub.js download "one piece" --chapters 1-10 --scan vf
 
+# Fusionner plusieurs chapitres en un seul EPUB (ex: un tome)
+node bin/manga-epub.js download "one piece" --chapters 1-10 --scan vf --merge
+
 # Dossier de sortie personnalisé
 node bin/manga-epub.js download "one piece" --chapter 1 --scan vf --out ./mes-mangas
 ```
 
-| Option        | Description                              | Défaut             |
-| ------------- | ---------------------------------------- | ------------------ |
-| `--chapter`   | Numéro du chapitre unique                | —                  |
-| `--chapters`  | Plage de chapitres (ex: `1-10`)          | —                  |
-| `--scan`      | Langue du scan (`vf` ou `vostfr`)        | `vf`               |
-| `--type`      | Type de scan (`couleur` ou `noir-blanc`) | `couleur`          |
-| `--out`       | Dossier de sortie                        | `./output`         |
+| Option        | Description                                        | Défaut             |
+| ------------- | -------------------------------------------------- | ------------------ |
+| `--chapter`   | Numéro du chapitre unique                          | —                  |
+| `--chapters`  | Plage de chapitres (ex: `1-10`)                    | —                  |
+| `--merge`     | Regrouper tous les chapitres dans un seul EPUB     | —                  |
+| `--scan`      | Langue du scan (`vf` ou `vostfr`)                  | `vf`               |
+| `--type`      | Type de scan (`couleur` ou `noir-blanc`)           | `couleur`          |
+| `--out`       | Dossier de sortie                                  | `./output`         |
 
 > `--chapter` et `--chapters` sont mutuellement exclusifs.
 
@@ -72,10 +76,19 @@ output/
 └── ...
 ```
 
+Avec `--merge`, les chapitres sont regroupés dans un seul fichier :
+
+```
+output/
+└── One_Piece_chapitres_1_10.epub
+```
+
 ## Fonctionnalités
 
 - Recherche de manga sur anime-sama.to
 - Support des scans couleur et noir et blanc
+- Fusion de plusieurs chapitres en un seul EPUB (`--merge`)
+- Auteur récupéré depuis le site ; couverture = première page du chapitre
 - Téléchargement avec retry automatique (3 tentatives)
 - Barre de progression CLI
 - User-Agent rotatif pour éviter le blocage
